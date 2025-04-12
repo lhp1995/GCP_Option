@@ -43,7 +43,7 @@ class option_valuation:
         self.call_put = call_put
         self.sim_number = int(sim_number) # Ensure integer
         self.option_style = option_style
-        self.dividend_yield = dividend_yield
+        self.dividend_yield = dividend_yield # Used internally by class methods
         self.model_type = model_type
 
         # --- Store Model Specific Parameters ---
@@ -111,6 +111,7 @@ class option_valuation:
         Z, = self._generate_random_factors(1)
         S = np.zeros((self.time_steps + 1, self.sim_number))
         S[0] = self.S0
+        # Use self.dividend_yield here
         drift = (self.rf - self.dividend_yield - 0.5 * self.Vol**2) * self.dt
         diffusion = self.Vol * np.sqrt(self.dt)
         for i in range(1, self.time_steps + 1):
@@ -131,6 +132,7 @@ class option_valuation:
 
         S = np.zeros((self.time_steps + 1, self.sim_number))
         S[0] = self.S0
+        # Use self.dividend_yield here
         drift = (self.rf - self.dividend_yield - jump_drift_comp - 0.5 * self.Vol**2) * self.dt
         diffusion = self.Vol * np.sqrt(self.dt)
 
@@ -173,6 +175,7 @@ class option_valuation:
             current_var = np.maximum(current_var, 1e-9) # Ensure positive variance
             current_sigma = np.sqrt(current_var)
 
+            # Use self.dividend_yield here
             drift_term = (self.rf - self.dividend_yield - 0.5 * current_var) * self.dt
             diffusion_term = current_sigma * np.sqrt(self.dt) * Z.iloc[i, :]
             log_return = drift_term + diffusion_term
@@ -287,6 +290,7 @@ e = st.sidebar.number_input("Strike (E):", min_value=0.01, value=100.0, step=1.0
 tt = st.sidebar.number_input("Maturity (Tt, yrs):", min_value=0.01, value=1.0, step=0.1, format="%.2f")
 vol = st.sidebar.number_input("Volatility (Vol):", min_value=0.0, value=0.20, step=0.01, format="%.2f")
 rf = st.sidebar.number_input("Risk-Free Rate (rf):", min_value=0.0, value=0.05, step=0.005, format="%.3f")
+# 'div' is the variable holding the dividend yield input
 div = st.sidebar.number_input("Dividend Yield (q):", min_value=0.0, value=0.01, step=0.005, format="%.3f")
 
 call_put_str = st.sidebar.selectbox("Type:", options=["Call", "Put"], index=0)
@@ -340,10 +344,12 @@ calculate_button = st.sidebar.button("Calculate Price & Update Graphs", type="pr
 # ==============================================================================
 
 # --- Helper function to run valuation - cached for performance ---
+# Note: The 'div' argument is expected here by this function definition
 @st.cache_data(show_spinner=False) # Use spinner within the button logic
 def run_valuation(s0, e, tt, vol, rf, base_dt, cp, sim_num, style, div, model, **model_params):
     """Runs a single option valuation. Cached by Streamlit."""
     try:
+        # The option_valuation class internally expects 'dividend_yield'
         option_instance = option_valuation(
             S0=s0, E=e, Tt=tt, Vol=vol, rf=rf, dt=base_dt, call_put=cp, sim_number=sim_num,
             option_style=style, dividend_yield=div, model_type=model, **model_params
@@ -410,6 +416,7 @@ if calculate_button:
 
 
             # --- 1. Calculate Single Price using Cached Function ---
+            # Call run_valuation with the 'div' argument it expects
             base_price_result = run_valuation(
                 s0=s0, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, cp=cp, sim_num=simulation_runs_app,
                 style=option_style, div=div, model=model_type, **model_args
@@ -433,6 +440,8 @@ if calculate_button:
             sim_plot_actual = max(50, int(sim_plot))
             num_points_actual = max(5, int(num_points_plot_app))
 
+            # Define common arguments for graph valuation calls
+            # These are passed via **kwargs to run_valuation
             common_plot_args_graphs = {
                 'sim_num': sim_plot_actual,
                 'style': option_style,
@@ -443,8 +452,9 @@ if calculate_button:
             # --- S0 Graph ---
             status_messages.append(" Calculating S0 sensitivity...")
             s0_range_plot = np.linspace(max(0.1, s0 * 0.7), s0 * 1.3, num_points_actual)
-            prices_s0_call = [run_valuation(s0=s_val, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div, cp=1, **common_plot_args_graphs) for s_val in s0_range_plot]
-            prices_s0_put = [run_valuation(s0=s_val, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div, cp=-1, **common_plot_args_graphs) for s_val in s0_range_plot]
+            # CORRECTED CALL: Use 'div=div' matching run_valuation definition
+            prices_s0_call = [run_valuation(s0=s_val, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, div=div, cp=1, **common_plot_args_graphs) for s_val in s0_range_plot]
+            prices_s0_put = [run_valuation(s0=s_val, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, div=div, cp=-1, **common_plot_args_graphs) for s_val in s0_range_plot]
 
             fig_s0 = go.Figure()
             fig_s0.add_trace(go.Scatter(x=s0_range_plot, y=prices_s0_call, mode='lines+markers', name=f'{option_style} Call'))
@@ -456,8 +466,9 @@ if calculate_button:
             # --- E Graph ---
             status_messages.append(" Calculating E sensitivity...")
             e_range_plot = np.linspace(max(0.1, e * 0.7), e * 1.3, num_points_actual)
-            prices_e_call = [run_valuation(s0=s0, e=e_val, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div, cp=1, **common_plot_args_graphs) for e_val in e_range_plot]
-            prices_e_put = [run_valuation(s0=s0, e=e_val, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div, cp=-1, **common_plot_args_graphs) for e_val in e_range_plot]
+            # CORRECTED CALL: Use 'div=div'
+            prices_e_call = [run_valuation(s0=s0, e=e_val, tt=tt, vol=vol, rf=rf, base_dt=base_dt, div=div, cp=1, **common_plot_args_graphs) for e_val in e_range_plot]
+            prices_e_put = [run_valuation(s0=s0, e=e_val, tt=tt, vol=vol, rf=rf, base_dt=base_dt, div=div, cp=-1, **common_plot_args_graphs) for e_val in e_range_plot]
 
             fig_e = go.Figure()
             fig_e.add_trace(go.Scatter(x=e_range_plot, y=prices_e_call, mode='lines+markers', name=f'{option_style} Call'))
@@ -475,8 +486,9 @@ if calculate_button:
             for tt_val in tt_range_plot:
                  # Adjust dt for short maturities if needed, or keep base_dt for consistency
                  current_dt = min(base_dt, tt_val / 10 if tt_val > 0 else base_dt) # Ensure dt <= Tt/10 roughly
-                 prices_tt_call.append(run_valuation(s0=s0, e=e, tt=tt_val, vol=vol, rf=rf, base_dt=current_dt, dividend_yield=div, cp=1, **common_plot_args_graphs))
-                 prices_tt_put.append(run_valuation(s0=s0, e=e, tt=tt_val, vol=vol, rf=rf, base_dt=current_dt, dividend_yield=div, cp=-1, **common_plot_args_graphs))
+                 # CORRECTED CALL: Use 'div=div'
+                 prices_tt_call.append(run_valuation(s0=s0, e=e, tt=tt_val, vol=vol, rf=rf, base_dt=current_dt, div=div, cp=1, **common_plot_args_graphs))
+                 prices_tt_put.append(run_valuation(s0=s0, e=e, tt=tt_val, vol=vol, rf=rf, base_dt=current_dt, div=div, cp=-1, **common_plot_args_graphs))
 
             fig_tt = go.Figure()
             fig_tt.add_trace(go.Scatter(x=tt_range_plot, y=prices_tt_call, mode='lines+markers', name=f'{option_style} Call'))
@@ -487,8 +499,9 @@ if calculate_button:
             # --- Vol Graph ---
             status_messages.append(" Calculating Vol sensitivity...")
             vol_range_plot = np.linspace(max(0.01, vol * 0.2), vol * 2.0 + 0.01, num_points_actual)
-            prices_vol_call = [run_valuation(s0=s0, e=e, tt=tt, vol=vol_val, rf=rf, base_dt=base_dt, dividend_yield=div, cp=1, **common_plot_args_graphs) for vol_val in vol_range_plot]
-            prices_vol_put = [run_valuation(s0=s0, e=e, tt=tt, vol=vol_val, rf=rf, base_dt=base_dt, dividend_yield=div, cp=-1, **common_plot_args_graphs) for vol_val in vol_range_plot]
+            # CORRECTED CALL: Use 'div=div'
+            prices_vol_call = [run_valuation(s0=s0, e=e, tt=tt, vol=vol_val, rf=rf, base_dt=base_dt, div=div, cp=1, **common_plot_args_graphs) for vol_val in vol_range_plot]
+            prices_vol_put = [run_valuation(s0=s0, e=e, tt=tt, vol=vol_val, rf=rf, base_dt=base_dt, div=div, cp=-1, **common_plot_args_graphs) for vol_val in vol_range_plot]
 
             fig_vol = go.Figure()
             fig_vol.add_trace(go.Scatter(x=vol_range_plot, y=prices_vol_call, mode='lines+markers', name=f'{option_style} Call'))
@@ -499,8 +512,9 @@ if calculate_button:
             # --- rf Graph ---
             status_messages.append(" Calculating rf sensitivity...")
             rf_range_plot = np.linspace(max(0.0, rf - 0.04), rf + 0.05, num_points_actual)
-            prices_rf_call = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf_val, base_dt=base_dt, dividend_yield=div, cp=1, **common_plot_args_graphs) for rf_val in rf_range_plot]
-            prices_rf_put = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf_val, base_dt=base_dt, dividend_yield=div, cp=-1, **common_plot_args_graphs) for rf_val in rf_range_plot]
+            # CORRECTED CALL: Use 'div=div'
+            prices_rf_call = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf_val, base_dt=base_dt, div=div, cp=1, **common_plot_args_graphs) for rf_val in rf_range_plot]
+            prices_rf_put = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf_val, base_dt=base_dt, div=div, cp=-1, **common_plot_args_graphs) for rf_val in rf_range_plot]
 
             fig_rf = go.Figure()
             fig_rf.add_trace(go.Scatter(x=rf_range_plot, y=prices_rf_call, mode='lines+markers', name=f'{option_style} Call'))
@@ -511,8 +525,9 @@ if calculate_button:
             # --- div Graph ---
             status_messages.append(" Calculating Dividend sensitivity...")
             div_range_plot = np.linspace(0.0, max(0.1, div * 2.0 + 0.02) , num_points_actual)
-            prices_div_call = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div_val, cp=1, **common_plot_args_graphs) for div_val in div_range_plot]
-            prices_div_put = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div_val, cp=-1, **common_plot_args_graphs) for div_val in div_range_plot]
+            # CORRECTED CALL: Use 'div=div_val' matching the loop variable
+            prices_div_call = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, div=div_val, cp=1, **common_plot_args_graphs) for div_val in div_range_plot]
+            prices_div_put = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, div=div_val, cp=-1, **common_plot_args_graphs) for div_val in div_range_plot]
 
             fig_div = go.Figure()
             fig_div.add_trace(go.Scatter(x=div_range_plot, y=prices_div_call, mode='lines+markers', name=f'{option_style} Call'))
@@ -525,12 +540,18 @@ if calculate_button:
                 # Check if any results were exceptions (returned by cached func)
                 has_error = False
                 for trace in fig.data:
-                    if any(isinstance(y, Exception) for y in trace.y):
+                    # Check if y-values exist and handle potential errors/NaNs
+                    if hasattr(trace, 'y') and trace.y is not None:
+                        if any(isinstance(y, Exception) for y in trace.y):
+                            has_error = True
+                            break
+                        if any(y is None or np.isnan(y) for y in trace.y): # Check for None or NaN
+                            has_error = True # Treat NaN/None as error for display
+                            break
+                    else: # Handle cases where y might be missing (unlikely for Scatter but safe)
                         has_error = True
                         break
-                    if any(np.isnan(y) for y in trace.y):
-                         has_error = True # Treat NaN as error for display
-                         break
+
                 if has_error:
                     graph_placeholders[key].error(f"Error generating graph '{key}'. Check logs.", icon="⚠️")
                     status_messages.append(f"ERROR generating graph '{key}'. Possible NaN or Exception in results.")
@@ -578,3 +599,6 @@ st.markdown(
     *Caching is enabled: Re-running with the exact same parameters will be much faster.*
     """
 )
+```
+
+I've updated the calls to `run_valuation` within the sensitivity graph list comprehensions (lines 448, 449, 459, 460, 472, 473, 483, 484, 494, 495, 505, 506) to use `div=...` instead of `dividend_yield=...`. This should resolve the `TypeErro
