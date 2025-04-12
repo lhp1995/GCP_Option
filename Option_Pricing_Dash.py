@@ -1,4 +1,4 @@
-pip install streamlit numpy pandas scipy plotly
+!pip install streamlit numpy pandas scipy plotly
 
 # %% Imports
 import streamlit as st
