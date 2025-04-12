@@ -1,7 +1,5 @@
 # %% Imports
-import dash
-import dash_bootstrap_components as dbc
-from dash import dcc, html, Input, Output, State, callback # Using current Dash import syntax
+import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
@@ -10,7 +8,7 @@ import time
 import traceback # For detailed error messages
 
 # ==============================================================================
-# %% Block 1: Option Valuation Class Definition
+# %% Block 1: Option Valuation Class Definition (Unchanged from original)
 # ==============================================================================
 class option_valuation:
     """
@@ -80,7 +78,7 @@ class option_valuation:
             self.option_value = self.european_option_valuation()
         elif self.option_style == 'American':
             if self.model_type != 'GBM':
-                 # Suppress warning in app context or log it
+                 # In Streamlit, we might show a warning using st.warning if needed
                  pass
             self.option_value = self.american_option_valuation_LS()
         else:
@@ -160,9 +158,9 @@ class option_valuation:
     def _simulate_garch(self):
          # Validate GARCH params
         if self.garch_omega <= 0 or self.garch_alpha < 0 or self.garch_beta < 0:
-            print(f"Warning: GARCH params omega={self.garch_omega}, alpha={self.garch_alpha}, beta={self.garch_beta} may be invalid.")
+            st.warning(f"GARCH params omega={self.garch_omega}, alpha={self.garch_alpha}, beta={self.garch_beta} may be invalid (non-positive).")
         # if self.garch_alpha + self.garch_beta >= 1:
-        #     print("Warning: GARCH process may not be stationary (alpha + beta >= 1).")
+        #     st.warning("GARCH process may not be stationary (alpha + beta >= 1).")
 
         Z, = self._generate_random_factors(1)
         S = np.zeros((self.time_steps + 1, self.sim_number))
@@ -182,6 +180,7 @@ class option_valuation:
             S[i] = np.maximum(S[i], 0) # Floor at zero
 
             # Update variance for next step using squared log return
+            # Apply GARCH(1,1) update rule
             V[i] = self.garch_omega + self.garch_alpha * log_return**2 + self.garch_beta * current_var
             V[i] = np.maximum(V[i], 1e-9) # Ensure variance stays positive
 
@@ -208,7 +207,8 @@ class option_valuation:
         prices = self.price_path.values
         # Ensure prices are finite
         if not np.all(np.isfinite(prices)):
-            print("Warning: Non-finite values found in price paths. Replacing with S0.")
+            # Maybe show a warning in Streamlit context
+            # st.warning("Non-finite values found in price paths. Replacing with S0.")
             prices = np.nan_to_num(prices, nan=self.S0, posinf=self.S0, neginf=0) # Replace NaNs/Infs
 
         payoffs = np.maximum(self.call_put * (prices - self.E), 0)
@@ -248,7 +248,7 @@ class option_valuation:
 
                         except (np.linalg.LinAlgError, TypeError, ValueError) as fit_err:
                              # Fallback: maybe use intrinsic value or zero? Using zero.
-                             # print(f"Warning: Regression failed at step {t}: {fit_err}")
+                             # Consider logging: print(f"Warning: Regression failed at step {t}: {fit_err}")
                              pass # continuation_value remains 0
                     # else: print(f"Warning: Not enough distinct S values for regression at step {t}")
                 # else: print(f"Warning: Not enough finite points for regression at step {t}")
@@ -269,412 +269,312 @@ class option_valuation:
         V0 = np.mean(valid_final_cashflows) * discount
         return V0
 
-print("Block 1 executed: option_valuation class defined.")
 # ==============================================================================
-# %% Block 2: App Initialization and Global Settings
-# ==============================================================================
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.LUMEN], suppress_callback_exceptions=True)
-server = app.server # For potential deployment integration
-
-# --- Global App Settings ---
-# Reduced simulations/points for app responsiveness
-simulation_runs_app = 1000 # Default sims for main price calc
-sim_plot = 500          # Sims used for graph calculations (KEEP LOW!)
-num_points_plot_app = 15 # Points per sensitivity graph (KEEP LOW!)
-
-print("Block 2 executed: App initialized.")
-# ==============================================================================
-# %% Block 3: App Layout Definition
+# %% Block 2: Streamlit App Setup & UI Definition
 # ==============================================================================
 
-# --- Reusable Input Group Function ---
-def make_input_group(label_text, input_id, input_type='number', input_value=None, input_step=None, input_min=None, input_max=None, width=7):
-    return dbc.Row([
-        dbc.Label(label_text, html_for=input_id, width=12-width),
-        dbc.Col(
-            dcc.Input(id=input_id, type=input_type, value=input_value, step=input_step, min=input_min, max=input_max, className="form-control form-control-sm") # Smaller form control
-        , width=width)
-    ], className="mb-2 align-items-center")
+st.set_page_config(layout="wide", page_title="Monte Carlo Option Pricer")
 
-# --- App Layout ---
-app.layout = dbc.Container([
-    dbc.Row(dbc.Col(html.H1("Monte Carlo Option Pricer & Analyzer"), width=12), className="mb-4 mt-2 text-center"),
-    dbc.Row([
-        # --- INPUT COLUMN ---
-        dbc.Col([
-            dbc.Card([
-                dbc.CardHeader(html.H5("Configuration", className="card-title")),
-                dbc.CardBody([
-                    # --- Option Parameters ---
-                    html.H6("Option Parameters", className="card-subtitle mb-2 text-muted"),
-                    make_input_group("Spot (S0):", 'input-s0', input_value=100, input_step='any', input_min=0.01),
-                    make_input_group("Strike (E):", 'input-e', input_value=100, input_step='any', input_min=0.01),
-                    make_input_group("Maturity (Tt, yrs):", 'input-tt', input_value=1.0, input_step='any', input_min=0.01),
-                    make_input_group("Volatility (Vol):", 'input-vol', input_value=0.20, input_step='any', input_min=0.0),
-                    make_input_group("Risk-Free Rate (rf):", 'input-rf', input_value=0.05, input_step='any', input_min=0.0),
-                    make_input_group("Dividend Yield (q):", 'input-div', input_value=0.01, input_step='any', input_min=0.0),
+st.title("Monte Carlo Option Pricer & Analyzer")
 
-                    dbc.Row([
-                        dbc.Label("Type:", html_for='input-callput', width=5),
-                        dbc.Col(dcc.Dropdown(id='input-callput', options=[{'label': 'Call', 'value': 1}, {'label': 'Put', 'value': -1}], value=1), width=7)
-                    ], className="mb-2 align-items-center"),
-                    dbc.Row([
-                         dbc.Label("Style:", html_for='input-style', width=5),
-                         dbc.Col(dcc.Dropdown(id='input-style', options=[{'label': 'European', 'value': 'European'}, {'label': 'American', 'value': 'American'}], value='European'), width=7)
-                    ], className="mb-2 align-items-center"),
+# --- Input Sidebar ---
+st.sidebar.header("Configuration")
 
-                    html.Hr(),
-                    # --- Model Selection ---
-                    html.H6("Underlying Model", className="card-subtitle mb-2 text-muted"),
-                     dbc.Row([
-                         dbc.Label("Model:", html_for='input-model', width=5),
-                         dbc.Col(dcc.Dropdown(id='input-model', options=[
-                             {'label': 'GBM', 'value': 'GBM'},
-                             {'label': 'Jump Diffusion', 'value': 'JumpDiffusion'},
-                             {'label': 'GARCH(1,1)', 'value': 'GARCH'}], value='GBM'), width=7)
-                    ], className="mb-2 align-items-center"),
+# --- Option Parameters ---
+st.sidebar.subheader("Option Parameters")
+s0 = st.sidebar.number_input("Spot (S0):", min_value=0.01, value=100.0, step=1.0, format="%.2f")
+e = st.sidebar.number_input("Strike (E):", min_value=0.01, value=100.0, step=1.0, format="%.2f")
+tt = st.sidebar.number_input("Maturity (Tt, yrs):", min_value=0.01, value=1.0, step=0.1, format="%.2f")
+vol = st.sidebar.number_input("Volatility (Vol):", min_value=0.0, value=0.20, step=0.01, format="%.2f")
+rf = st.sidebar.number_input("Risk-Free Rate (rf):", min_value=0.0, value=0.05, step=0.005, format="%.3f")
+div = st.sidebar.number_input("Dividend Yield (q):", min_value=0.0, value=0.01, step=0.005, format="%.3f")
 
-                    # --- Conditional Model Parameters ---
-                    html.Div(id='jump-params-div', children=[
-                        html.H6("Jump Diffusion Params:", className="text-muted mt-2"),
-                        make_input_group("Lambda (λ):", 'input-jlambda', input_value=0.5, input_step='any', input_min=0),
-                        make_input_group("Mean (μ):", 'input-jmu', input_value=-0.05, input_step='any'),
-                        make_input_group("Sigma (σj):", 'input-jsigma', input_value=0.25, input_step='any', input_min=0.001),
-                    ], style={'display': 'none', 'border':'1px solid #eee', 'padding':'10px', 'border-radius':'5px', 'margin-top':'10px'}), # Initially hidden
+call_put_str = st.sidebar.selectbox("Type:", options=["Call", "Put"], index=0)
+option_style = st.sidebar.selectbox("Style:", options=["European", "American"], index=0)
 
-                    html.Div(id='garch-params-div', children=[
-                         html.H6("GARCH(1,1) Params:", className="text-muted mt-2"),
-                         make_input_group("Omega (ω):", 'input-gomega', input_value='1e-6', input_step='any', input_min=0, input_type='text'), # Text for sci notation
-                         make_input_group("Alpha (α):", 'input-galpha', input_value=0.09, input_step='any', input_min=0),
-                         make_input_group("Beta (β):", 'input-gbeta', input_value=0.90, input_step='any', input_min=0),
-                    ], style={'display': 'none', 'border':'1px solid #eee', 'padding':'10px', 'border-radius':'5px', 'margin-top':'10px'}), # Initially hidden
+# Map string selection to numerical value expected by the class
+cp = 1 if call_put_str == "Call" else -1
 
-                    html.Hr(),
-                    # --- Simulation Settings ---
-                    html.H6("Simulation Settings", className="card-subtitle mb-2 text-muted"),
-                    make_input_group("Simulations (Price):", 'input-simnum', input_value=simulation_runs_app, input_step='any', input_min=100),
-                    make_input_group("Time Steps/Year:", 'input-ts-year', input_value=50, input_step='any', input_min=1),
-                    make_input_group(f"Sims per Graph Pt:", 'input-sim-plot', input_value=sim_plot, input_step='any', input_min=50),
-                    make_input_group(f"Points per Graph:", 'input-points-plot', input_value=num_points_plot_app, input_step='any', input_min=5, input_max=50),
+st.sidebar.divider()
 
-                    html.Hr(),
-                    # --- Action Button and Output ---
-                    dbc.Button("Calculate Price & Update Graphs", id='calculate-button', n_clicks=0, color="primary", className="w-100 mb-3 fw-bold"),
-                    dbc.Alert("Price results will appear here.", id='output-price', color="info", className="text-center fw-bold fs-5"),
-                    dbc.Collapse( # Collapsible section for status/logs
-                         dbc.Card(dbc.CardBody(html.Pre(id='calc-status', style={'max-height':'150px', 'overflow-y':'scroll', 'font-size':'0.8em'}))),
-                         id="collapse-status", is_open=False,
-                    ),
-                    dbc.Button("Show/Hide Logs", id="collapse-button", color="secondary", size="sm", className="mt-1 w-100"),
+# --- Model Selection ---
+st.sidebar.subheader("Underlying Model")
+model_type = st.sidebar.selectbox("Model:", options=["GBM", "JumpDiffusion", "GARCH"], index=0)
 
-                ]) # End CardBody
-            ]), # End Card
-        ], md=4), # End Input Column
+# --- Conditional Model Parameters ---
+model_args = {}
+jump_params = {}
+garch_params = {}
 
-        # --- GRAPH COLUMN ---
-        dbc.Col([
-            dbc.Card([
-                dbc.CardHeader(html.H5("Sensitivity Analysis", className="card-title")),
-                dbc.CardBody([
-                    dcc.Loading( # Wrap all graphs in a single Loading component
-                        type="default",
-                        children=[
-                             dbc.Row([dbc.Col(dcc.Graph(id='graph-s0'), md=12)]),
-                             dbc.Row([dbc.Col(dcc.Graph(id='graph-e'), md=12)]),
-                             dbc.Row([dbc.Col(dcc.Graph(id='graph-tt'), md=12)]),
-                             dbc.Row([dbc.Col(dcc.Graph(id='graph-vol'), md=12)]),
-                             dbc.Row([dbc.Col(dcc.Graph(id='graph-rf'), md=12)]),
-                             dbc.Row([dbc.Col(dcc.Graph(id='graph-div'), md=12)]),
-                             # --- REMOVED GRAPH 7 (graph-compare) ---
-                        ]
-                    ) # End Loading
-                ]) # End CardBody
-            ]) # End Card
-        ], md=8) # End Graph Column
-    ]) # End Main Row
-], fluid=True)
+if model_type == 'JumpDiffusion':
+    st.sidebar.subheader("Jump Diffusion Params:")
+    jump_params['jump_lambda'] = st.sidebar.number_input("Lambda (λ):", min_value=0.0, value=0.5, step=0.1, format="%.2f")
+    jump_params['jump_mu'] = st.sidebar.number_input("Mean (μ):", value=-0.05, step=0.01, format="%.2f")
+    jump_params['jump_sigma'] = st.sidebar.number_input("Sigma (σj):", min_value=0.001, value=0.25, step=0.01, format="%.3f")
+    model_args = jump_params
+elif model_type == 'GARCH':
+    st.sidebar.subheader("GARCH(1,1) Params:")
+    # Use text input for scientific notation flexibility, convert later
+    garch_omega_str = st.sidebar.text_input("Omega (ω):", value='1e-6')
+    garch_params['garch_alpha'] = st.sidebar.number_input("Alpha (α):", min_value=0.0, value=0.09, step=0.01, format="%.3f")
+    garch_params['garch_beta'] = st.sidebar.number_input("Beta (β):", min_value=0.0, value=0.90, step=0.01, format="%.3f")
+    # Attempt conversion for validation inside button click
+    model_args = garch_params # Store user inputs for now
 
-print("Block 3 executed: App layout defined.")
+st.sidebar.divider()
+
+# --- Simulation Settings ---
+st.sidebar.subheader("Simulation Settings")
+simulation_runs_app = st.sidebar.number_input("Simulations (Price):", min_value=100, value=1000, step=100)
+ts_year = st.sidebar.number_input("Time Steps/Year:", min_value=1, value=50, step=1)
+sim_plot = st.sidebar.number_input("Sims per Graph Pt:", min_value=50, value=500, step=50)
+num_points_plot_app = st.sidebar.number_input("Points per Graph:", min_value=5, max_value=50, value=15, step=1)
+
+st.sidebar.divider()
+
+# --- Action Button ---
+calculate_button = st.sidebar.button("Calculate Price & Update Graphs", type="primary", use_container_width=True)
+
 # ==============================================================================
-# %% Block 4: App Callbacks
+# %% Block 3: Calculation and Output Area
 # ==============================================================================
 
-# --- Callback to toggle log visibility ---
-@callback(
-    Output("collapse-status", "is_open"),
-    Input("collapse-button", "n_clicks"),
-    State("collapse-status", "is_open"),
-    prevent_initial_call=True,
-)
-def toggle_collapse(n, is_open):
-    if n:
-        return not is_open
-    return is_open
+# --- Helper function to run valuation - cached for performance ---
+@st.cache_data(show_spinner=False) # Use spinner within the button logic
+def run_valuation(s0, e, tt, vol, rf, base_dt, cp, sim_num, style, div, model, **model_params):
+    """Runs a single option valuation. Cached by Streamlit."""
+    try:
+        option_instance = option_valuation(
+            S0=s0, E=e, Tt=tt, Vol=vol, rf=rf, dt=base_dt, call_put=cp, sim_number=sim_num,
+            option_style=style, dividend_yield=div, model_type=model, **model_params
+        )
+        return option_instance.option_value
+    except Exception as err:
+        # Return the error to be handled by the caller
+        return err
 
-# --- Callback to show/hide model-specific parameters ---
-@callback(
-    Output('jump-params-div', 'style'),
-    Output('garch-params-div', 'style'),
-    Input('input-model', 'value')
-)
-def toggle_model_params(selected_model):
-    """Shows/hides the input sections for Jump or GARCH parameters."""
-    if selected_model == 'JumpDiffusion':
-        return {'display': 'block', 'border':'1px solid #eee', 'padding':'10px', 'border-radius':'5px', 'margin-top':'10px'}, {'display': 'none'}
-    elif selected_model == 'GARCH':
-        return {'display': 'none'}, {'display': 'block', 'border':'1px solid #eee', 'padding':'10px', 'border-radius':'5px', 'margin-top':'10px'}
-    else: # GBM
-        return {'display': 'none'}, {'display': 'none'}
+# --- Define placeholders for outputs ---
+price_placeholder = st.empty()
+graph_cols = st.columns(2) # Create columns for graphs
+graph_placeholders = {
+    's0': graph_cols[0].empty(),
+    'e': graph_cols[1].empty(),
+    'tt': graph_cols[0].empty(),
+    'vol': graph_cols[1].empty(),
+    'rf': graph_cols[0].empty(),
+    'div': graph_cols[1].empty(),
+}
+log_expander = st.expander("Show Calculation Logs", expanded=False)
+log_placeholder = log_expander.empty()
 
-# --- Main callback to calculate price and update all graphs ---
-@callback(
-    # Outputs (Removed graph-compare)
-    Output('output-price', 'children'),
-    Output('output-price', 'color'),
-    Output('calc-status', 'children'),
-    Output('graph-s0', 'figure'),
-    Output('graph-e', 'figure'),
-    Output('graph-tt', 'figure'),
-    Output('graph-vol', 'figure'),
-    Output('graph-rf', 'figure'),
-    Output('graph-div', 'figure'),
 
-    # Trigger
-    Input('calculate-button', 'n_clicks'),
-
-    # State Inputs (Get current values when button is clicked)
-    State('input-s0', 'value'), State('input-e', 'value'), State('input-tt', 'value'),
-    State('input-vol', 'value'), State('input-rf', 'value'), State('input-div', 'value'),
-    State('input-callput', 'value'), State('input-style', 'value'),
-    State('input-model', 'value'),
-    State('input-simnum', 'value'), State('input-ts-year', 'value'),
-    State('input-sim-plot', 'value'), State('input-points-plot', 'value'),
-    # Model Params State
-    State('input-jlambda', 'value'), State('input-jmu', 'value'), State('input-jsigma', 'value'),
-    State('input-gomega', 'value'), State('input-galpha', 'value'), State('input-gbeta', 'value'),
-    prevent_initial_call=True # Don't run when app loads
-)
-def update_price_and_graphs(
-    n_clicks, s0, e, tt, vol, rf, div, cp, style, model, simnum, ts_year,
-    sim_plot_val, points_plot_val,
-    jlambda, jmu, jsigma, gomega_str, galpha, gbeta):
-    """
-    This function runs when the button is clicked. It calculates the option price
-    and generates data for all sensitivity graphs, then updates the UI.
-    """
+# --- Calculation Logic (Runs when button is clicked) ---
+if calculate_button:
     start_calc_time = time.time()
     status_messages = []
     error_occurred = False
+    graphs = {} # To store generated figures
 
-    # --- Helper Function for Plotting ---
-    def create_empty_figure(title="Error generating graph"):
-        fig = go.Figure()
-        fig.update_layout(
-            title=title, height=300, margin=dict(t=40, b=20, l=30, r=30),
-            xaxis={'visible': False}, yaxis={'visible': False},
-            annotations=[{'text': title, 'xref': 'paper', 'yref': 'paper', 'showarrow': False, 'font': {'size': 12}}]
-        )
-        return fig
+    # --- Initial Price Display ---
+    price_placeholder.info("Calculating...", icon="⏳")
+    for key in graph_placeholders:
+        graph_placeholders[key].info(f"Generating Graph {key}...", icon="⏳")
+    log_placeholder.info("Starting calculations...")
 
-    # --- Create default empty figures for all graphs ---
-    fig_s0 = create_empty_figure("Sensitivity to Spot (Pending Calculation)")
-    fig_e = create_empty_figure("Sensitivity to Strike (Pending Calculation)")
-    fig_tt = create_empty_figure("Sensitivity to Maturity (Pending Calculation)")
-    fig_vol = create_empty_figure("Sensitivity to Volatility (Pending Calculation)")
-    fig_rf = create_empty_figure("Sensitivity to Rate (Pending Calculation)")
-    fig_div = create_empty_figure("Sensitivity to Dividend (Pending Calculation)")
-    # Removed: fig_compare
+    with st.spinner(f"Running Monte Carlo ({model_type})... Please wait."):
+        try:
+            # --- Input Validation ---
+            if tt <= 0 or vol < 0 or simulation_runs_app <= 0 or ts_year <= 0 or sim_plot <= 0 or num_points_plot_app <= 0:
+                raise ValueError("Tt, Vol, Simulations, Time Steps, Plot Sims/Points must be positive.")
+            if e <= 0: raise ValueError("Strike (E) must be positive.")
+            if s0 <= 0: raise ValueError("Spot (S0) must be positive.")
+            base_dt = 1.0 / ts_year
 
-    # --- Input Validation ---
-    if n_clicks == 0: # Failsafe
-        return "Click button to calculate.", "info", "", fig_s0, fig_e, fig_tt, fig_vol, fig_rf, fig_div
+            # --- Parse Model Specific Args (with validation) ---
+            if model_type == 'GARCH':
+                try:
+                    # Convert omega here
+                    model_args['garch_omega'] = float(garch_omega_str)
+                    if model_args['garch_omega'] < 0:
+                         st.warning("GARCH Omega (ω) should ideally be non-negative.")
+                except ValueError:
+                    raise ValueError(f"Invalid GARCH Omega (ω): '{garch_omega_str}'. Must be a number.")
+                if model_args['garch_alpha'] < 0 or model_args['garch_beta'] < 0:
+                     st.warning("GARCH Alpha (α) and Beta (β) should ideally be non-negative.")
+            elif model_type == 'JumpDiffusion':
+                 if model_args['jump_sigma'] <= 0:
+                     raise ValueError("Jump Sigma (σj) must be positive.")
 
-    try:
-        core_params = [s0, e, tt, vol, rf, div, cp, style, model, simnum, ts_year, sim_plot_val, points_plot_val]
-        if None in core_params: raise ValueError("Core input parameters cannot be empty.")
-        s0, e, tt, vol, rf, div = float(s0), float(e), float(tt), float(vol), float(rf), float(div)
-        simnum, ts_year = int(simnum), int(ts_year)
-        sim_plot_val, points_plot_val = int(sim_plot_val), int(points_plot_val)
-        if tt <= 0 or vol < 0 or simnum <= 0 or ts_year <= 0 or sim_plot_val <=0 or points_plot_val <= 0:
-             raise ValueError("Tt, Vol, Simulations, Time Steps, Plot Sims/Points must be positive.")
-        if e <= 0: raise ValueError("Strike (E) must be positive.")
-        if s0 <= 0: raise ValueError("Spot (S0) must be positive.")
-        base_dt = 1.0 / ts_year
-    except (ValueError, TypeError) as verr:
-         status_messages.append(f"Input Error: {verr}")
-         # Return empty figures for all graphs
-         return "Input Error", "danger", html.Pre("\n".join(status_messages)), fig_s0, fig_e, fig_tt, fig_vol, fig_rf, fig_div
+            status_messages.append(f"Using Model: {model_type} with params: {model_args}")
+            status_messages.append(f"Calculating base price ({option_style} {call_put_str})...")
 
 
-    # --- Parse Model Specific Args ---
-    model_args = {}
-    try:
-        if model == 'JumpDiffusion':
-            if None in [jlambda, jmu, jsigma]: raise ValueError("Jump parameters cannot be empty.")
-            model_args = {'jump_lambda': float(jlambda), 'jump_mu': float(jmu), 'jump_sigma': float(jsigma)}
-            if model_args['jump_sigma'] <= 0: raise ValueError("Jump Sigma must be positive.")
-        elif model == 'GARCH':
-            if None in [gomega_str, galpha, gbeta]: raise ValueError("GARCH parameters cannot be empty.")
-            model_args = {'garch_omega': float(gomega_str), 'garch_alpha': float(galpha), 'garch_beta': float(gbeta)}
-            if model_args['garch_omega'] < 0 or model_args['garch_alpha'] < 0 or model_args['garch_beta'] < 0:
-                 print("Warning: Negative GARCH parameters provided.")
-    except (ValueError, TypeError) as model_err:
-        status_messages.append(f"Model Parameter Error: {model_err}")
-        # Return empty figures for all graphs
-        return "Model Parameter Error", "danger", html.Pre("\n".join(status_messages)), fig_s0, fig_e, fig_tt, fig_vol, fig_rf, fig_div
+            # --- 1. Calculate Single Price using Cached Function ---
+            base_price_result = run_valuation(
+                s0=s0, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, cp=cp, sim_num=simulation_runs_app,
+                style=option_style, div=div, model=model_type, **model_args
+            )
+
+            if isinstance(base_price_result, Exception):
+                 raise base_price_result # Raise error caught in cached function
+            elif np.isnan(base_price_result):
+                 raise ValueError("Base price calculation returned NaN.")
+            else:
+                 option_value_base = base_price_result
+                 price_placeholder.metric(
+                     label=f"{option_style} {call_put_str} Price ({model_type})",
+                     value=f"{option_value_base:.4f}"
+                 )
+                 status_messages.append(f"-> Base price calculated: {option_value_base:.4f}")
 
 
-    # --- 1. Calculate Single Price ---
-    price_output = "Error calculating price."
-    price_color = "danger"
-    option_value_base = np.nan
-    try:
-        status_messages.append(f"Calculating base price ({style} {model} {'Call' if cp==1 else 'Put'})...")
-        option_base = option_valuation(
-            S0=s0, E=e, Tt=tt, Vol=vol, rf=rf, dt=base_dt, call_put=cp, sim_number=simnum,
-            option_style=style, dividend_yield=div, model_type=model, **model_args
-        )
-        option_value_base = option_base.option_value
-        if np.isnan(option_value_base): raise ValueError("Calculation returned NaN.")
-        price_output = f"{option_value_base:.4f}"
-        price_color = "success"
-        status_messages.append(f"-> Base price calculated: {option_value_base:.4f}")
-    except Exception as err:
-        error_occurred = True
-        tb_str = traceback.format_exc()
-        price_output = f"Pricing Error"
-        status_messages.append(f"ERROR calculating base price: {err}\n{tb_str}")
+            # --- 2. Calculate Data for Graphs ---
+            status_messages.append(f"\nGenerating sensitivity graphs (Sims/Pt={sim_plot}, Pts={num_points_plot_app})...")
+            sim_plot_actual = max(50, int(sim_plot))
+            num_points_actual = max(5, int(num_points_plot_app))
+
+            common_plot_args_graphs = {
+                'sim_num': sim_plot_actual,
+                'style': option_style,
+                'model': model_type,
+                **model_args
+            }
+
+            # --- S0 Graph ---
+            status_messages.append(" Calculating S0 sensitivity...")
+            s0_range_plot = np.linspace(max(0.1, s0 * 0.7), s0 * 1.3, num_points_actual)
+            prices_s0_call = [run_valuation(s0=s_val, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div, cp=1, **common_plot_args_graphs) for s_val in s0_range_plot]
+            prices_s0_put = [run_valuation(s0=s_val, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div, cp=-1, **common_plot_args_graphs) for s_val in s0_range_plot]
+
+            fig_s0 = go.Figure()
+            fig_s0.add_trace(go.Scatter(x=s0_range_plot, y=prices_s0_call, mode='lines+markers', name=f'{option_style} Call'))
+            fig_s0.add_trace(go.Scatter(x=s0_range_plot, y=prices_s0_put, mode='lines+markers', name=f'{option_style} Put'))
+            fig_s0.add_vline(x=e, line_dash="dash", line_color="grey", annotation_text=f"E={e:.2f}")
+            fig_s0.update_layout(title=f"vs Spot Price ({model_type})", xaxis_title="Spot Price (S0)", yaxis_title="Option Price", height=350, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
+            graphs['s0'] = fig_s0
+
+            # --- E Graph ---
+            status_messages.append(" Calculating E sensitivity...")
+            e_range_plot = np.linspace(max(0.1, e * 0.7), e * 1.3, num_points_actual)
+            prices_e_call = [run_valuation(s0=s0, e=e_val, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div, cp=1, **common_plot_args_graphs) for e_val in e_range_plot]
+            prices_e_put = [run_valuation(s0=s0, e=e_val, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div, cp=-1, **common_plot_args_graphs) for e_val in e_range_plot]
+
+            fig_e = go.Figure()
+            fig_e.add_trace(go.Scatter(x=e_range_plot, y=prices_e_call, mode='lines+markers', name=f'{option_style} Call'))
+            fig_e.add_trace(go.Scatter(x=e_range_plot, y=prices_e_put, mode='lines+markers', name=f'{option_style} Put'))
+            fig_e.add_vline(x=s0, line_dash="dash", line_color="grey", annotation_text=f"S0={s0:.2f}")
+            fig_e.update_layout(title=f"vs Strike Price ({model_type})", xaxis_title="Strike Price (E)", yaxis_title="Option Price", height=350, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99))
+            graphs['e'] = fig_e
+
+            # --- Tt Graph ---
+            status_messages.append(" Calculating Tt sensitivity...")
+            min_tt_plot = max(base_dt * 5, 0.02) # Ensure Tt > 0 for plotting
+            tt_range_plot = np.linspace(min_tt_plot, tt * 1.5 + min_tt_plot, num_points_actual)
+            prices_tt_call = []
+            prices_tt_put = []
+            for tt_val in tt_range_plot:
+                 # Adjust dt for short maturities if needed, or keep base_dt for consistency
+                 current_dt = min(base_dt, tt_val / 10 if tt_val > 0 else base_dt) # Ensure dt <= Tt/10 roughly
+                 prices_tt_call.append(run_valuation(s0=s0, e=e, tt=tt_val, vol=vol, rf=rf, base_dt=current_dt, dividend_yield=div, cp=1, **common_plot_args_graphs))
+                 prices_tt_put.append(run_valuation(s0=s0, e=e, tt=tt_val, vol=vol, rf=rf, base_dt=current_dt, dividend_yield=div, cp=-1, **common_plot_args_graphs))
+
+            fig_tt = go.Figure()
+            fig_tt.add_trace(go.Scatter(x=tt_range_plot, y=prices_tt_call, mode='lines+markers', name=f'{option_style} Call'))
+            fig_tt.add_trace(go.Scatter(x=tt_range_plot, y=prices_tt_put, mode='lines+markers', name=f'{option_style} Put'))
+            fig_tt.update_layout(title=f"vs Maturity ({model_type})", xaxis_title="Time to Maturity (Tt, years)", yaxis_title="Option Price", height=350, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
+            graphs['tt'] = fig_tt
+
+            # --- Vol Graph ---
+            status_messages.append(" Calculating Vol sensitivity...")
+            vol_range_plot = np.linspace(max(0.01, vol * 0.2), vol * 2.0 + 0.01, num_points_actual)
+            prices_vol_call = [run_valuation(s0=s0, e=e, tt=tt, vol=vol_val, rf=rf, base_dt=base_dt, dividend_yield=div, cp=1, **common_plot_args_graphs) for vol_val in vol_range_plot]
+            prices_vol_put = [run_valuation(s0=s0, e=e, tt=tt, vol=vol_val, rf=rf, base_dt=base_dt, dividend_yield=div, cp=-1, **common_plot_args_graphs) for vol_val in vol_range_plot]
+
+            fig_vol = go.Figure()
+            fig_vol.add_trace(go.Scatter(x=vol_range_plot, y=prices_vol_call, mode='lines+markers', name=f'{option_style} Call'))
+            fig_vol.add_trace(go.Scatter(x=vol_range_plot, y=prices_vol_put, mode='lines+markers', name=f'{option_style} Put'))
+            fig_vol.update_layout(title=f"vs Volatility ({model_type})", xaxis_title="Volatility (Vol)", yaxis_title="Option Price", height=350, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
+            graphs['vol'] = fig_vol
+
+            # --- rf Graph ---
+            status_messages.append(" Calculating rf sensitivity...")
+            rf_range_plot = np.linspace(max(0.0, rf - 0.04), rf + 0.05, num_points_actual)
+            prices_rf_call = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf_val, base_dt=base_dt, dividend_yield=div, cp=1, **common_plot_args_graphs) for rf_val in rf_range_plot]
+            prices_rf_put = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf_val, base_dt=base_dt, dividend_yield=div, cp=-1, **common_plot_args_graphs) for rf_val in rf_range_plot]
+
+            fig_rf = go.Figure()
+            fig_rf.add_trace(go.Scatter(x=rf_range_plot, y=prices_rf_call, mode='lines+markers', name=f'{option_style} Call'))
+            fig_rf.add_trace(go.Scatter(x=rf_range_plot, y=prices_rf_put, mode='lines+markers', name=f'{option_style} Put'))
+            fig_rf.update_layout(title=f"vs Risk-Free Rate ({model_type})", xaxis_title="Risk-Free Rate (rf)", yaxis_title="Option Price", height=350, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
+            graphs['rf'] = fig_rf
+
+            # --- div Graph ---
+            status_messages.append(" Calculating Dividend sensitivity...")
+            div_range_plot = np.linspace(0.0, max(0.1, div * 2.0 + 0.02) , num_points_actual)
+            prices_div_call = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div_val, cp=1, **common_plot_args_graphs) for div_val in div_range_plot]
+            prices_div_put = [run_valuation(s0=s0, e=e, tt=tt, vol=vol, rf=rf, base_dt=base_dt, dividend_yield=div_val, cp=-1, **common_plot_args_graphs) for div_val in div_range_plot]
+
+            fig_div = go.Figure()
+            fig_div.add_trace(go.Scatter(x=div_range_plot, y=prices_div_call, mode='lines+markers', name=f'{option_style} Call'))
+            fig_div.add_trace(go.Scatter(x=div_range_plot, y=prices_div_put, mode='lines+markers', name=f'{option_style} Put'))
+            fig_div.update_layout(title=f"vs Dividend Yield ({model_type})", xaxis_title="Dividend Yield (q)", yaxis_title="Option Price", height=350, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
+            graphs['div'] = fig_div
+
+            # --- Update Graph Placeholders ---
+            for key, fig in graphs.items():
+                # Check if any results were exceptions (returned by cached func)
+                has_error = False
+                for trace in fig.data:
+                    if any(isinstance(y, Exception) for y in trace.y):
+                        has_error = True
+                        break
+                    if any(np.isnan(y) for y in trace.y):
+                         has_error = True # Treat NaN as error for display
+                         break
+                if has_error:
+                    graph_placeholders[key].error(f"Error generating graph '{key}'. Check logs.", icon="⚠️")
+                    status_messages.append(f"ERROR generating graph '{key}'. Possible NaN or Exception in results.")
+                    error_occurred = True
+                else:
+                    graph_placeholders[key].plotly_chart(fig, use_container_width=True)
 
 
-    # --- 2. Calculate Data for Graphs ---
-    status_messages.append(f"\nGenerating sensitivity graphs (Sims/Pt={sim_plot_val}, Pts={points_plot_val})...")
-    sim_plot_actual = max(50, int(sim_plot_val))
-    num_points_actual = max(5, int(points_plot_val))
+        except Exception as e:
+            error_occurred = True
+            tb_str = traceback.format_exc()
+            price_placeholder.error(f"Calculation Error: {e}", icon="🚨")
+            status_messages.append(f"\n--- ERROR ---")
+            status_messages.append(str(e))
+            status_messages.append(tb_str)
+            # Clear any potentially partially drawn graphs on error
+            for key in graph_placeholders:
+                 if key not in graphs: # If graph wasn't even generated before error
+                    graph_placeholders[key].error(f"Graph '{key}' cancelled due to error.", icon="⚠️")
 
-    # --- CORRECTED common_plot_args definition ---
-    # Include only arguments that are CONSTANT across ALL graph loops below
-    common_plot_args_graphs = {'sim_number': sim_plot_actual,
-                             'option_style': style,
-                             'model_type': model,
-                             **model_args}
-
-    # --- S0 Graph ---
-    try:
-        status_messages.append(" Calculating S0 sensitivity...")
-        s0_range_plot = np.linspace(max(0.1, s0 * 0.7), s0 * 1.3, num_points_actual)
-        # Explicitly pass all necessary option params, varying S0
-        prices_s0_call = [option_valuation(S0=s_val, E=e, Tt=tt, Vol=vol, rf=rf, dt=base_dt, dividend_yield=div, call_put=1, **common_plot_args_graphs).option_value for s_val in s0_range_plot]
-        prices_s0_put = [option_valuation(S0=s_val, E=e, Tt=tt, Vol=vol, rf=rf, dt=base_dt, dividend_yield=div, call_put=-1, **common_plot_args_graphs).option_value for s_val in s0_range_plot]
-
-        fig_s0 = go.Figure()
-        fig_s0.add_trace(go.Scatter(x=s0_range_plot, y=prices_s0_call, mode='lines+markers', name=f'{style} Call'))
-        fig_s0.add_trace(go.Scatter(x=s0_range_plot, y=prices_s0_put, mode='lines+markers', name=f'{style} Put'))
-        fig_s0.add_vline(x=e, line_dash="dash", line_color="grey", annotation_text=f"E={e:.2f}")
-        fig_s0.update_layout(title=f"vs Spot Price ({model})", xaxis_title="Spot Price (S0)", yaxis_title="Option Price", height=300, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
-    except Exception as graph_err: error_occurred = True; status_messages.append(f" ERROR: S0 Graph: {graph_err}"); fig_s0 = create_empty_figure(f"Error")
-
-    # --- E Graph ---
-    try:
-        status_messages.append(" Calculating E sensitivity...")
-        e_range_plot = np.linspace(max(0.1, e * 0.7), e * 1.3, num_points_actual)
-        # Explicitly pass all necessary option params, varying E
-        prices_e_call = [option_valuation(S0=s0, E=e_val, Tt=tt, Vol=vol, rf=rf, dt=base_dt, dividend_yield=div, call_put=1, **common_plot_args_graphs).option_value for e_val in e_range_plot]
-        prices_e_put = [option_valuation(S0=s0, E=e_val, Tt=tt, Vol=vol, rf=rf, dt=base_dt, dividend_yield=div, call_put=-1, **common_plot_args_graphs).option_value for e_val in e_range_plot]
-
-        fig_e = go.Figure()
-        fig_e.add_trace(go.Scatter(x=e_range_plot, y=prices_e_call, mode='lines+markers', name=f'{style} Call'))
-        fig_e.add_trace(go.Scatter(x=e_range_plot, y=prices_e_put, mode='lines+markers', name=f'{style} Put'))
-        fig_e.add_vline(x=s0, line_dash="dash", line_color="grey", annotation_text=f"S0={s0:.2f}")
-        fig_e.update_layout(title=f"vs Strike Price ({model})", xaxis_title="Strike Price (E)", yaxis_title="Option Price", height=300, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99))
-    except Exception as graph_err: error_occurred = True; status_messages.append(f" ERROR: E Graph: {graph_err}"); fig_e = create_empty_figure(f"Error")
-
-    # --- Tt Graph ---
-    try:
-        status_messages.append(" Calculating Tt sensitivity...")
-        min_tt = max(base_dt * 5, 0.02)
-        tt_range_plot = np.linspace(min_tt, tt * 1.5 + min_tt, num_points_actual)
-        prices_tt_call = []
-        prices_tt_put = []
-        for tt_val in tt_range_plot:
-            # Calculate dt specific to this tt_val for accuracy at short Tt
-            current_dt = min(base_dt, tt_val / 10 if tt_val > 0 else base_dt) # Ensure dt <= Tt/10 roughly
-            # Explicitly pass all necessary option params, varying Tt and dt
-            call_opt = option_valuation(S0=s0, E=e, Tt=tt_val, Vol=vol, rf=rf, dt=current_dt, dividend_yield=div, call_put=1, **common_plot_args_graphs)
-            put_opt = option_valuation(S0=s0, E=e, Tt=tt_val, Vol=vol, rf=rf, dt=current_dt, dividend_yield=div, call_put=-1, **common_plot_args_graphs)
-            prices_tt_call.append(call_opt.option_value)
-            prices_tt_put.append(put_opt.option_value)
-
-        fig_tt = go.Figure()
-        fig_tt.add_trace(go.Scatter(x=tt_range_plot, y=prices_tt_call, mode='lines+markers', name=f'{style} Call'))
-        fig_tt.add_trace(go.Scatter(x=tt_range_plot, y=prices_tt_put, mode='lines+markers', name=f'{style} Put'))
-        fig_tt.update_layout(title=f"vs Maturity ({model})", xaxis_title="Time to Maturity (Tt, years)", yaxis_title="Option Price", height=300, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
-    except Exception as graph_err: error_occurred = True; status_messages.append(f" ERROR: Tt Graph: {graph_err}"); fig_tt = create_empty_figure(f"Error")
-
-    # --- Vol Graph ---
-    try:
-        status_messages.append(" Calculating Vol sensitivity...")
-        vol_range_plot = np.linspace(max(0.01, vol * 0.2), vol * 2.0 + 0.01, num_points_actual)
-        # Explicitly pass all necessary option params, varying Vol
-        prices_vol_call = [option_valuation(S0=s0, E=e, Tt=tt, Vol=vol_val, rf=rf, dt=base_dt, dividend_yield=div, call_put=1, **common_plot_args_graphs).option_value for vol_val in vol_range_plot]
-        prices_vol_put = [option_valuation(S0=s0, E=e, Tt=tt, Vol=vol_val, rf=rf, dt=base_dt, dividend_yield=div, call_put=-1, **common_plot_args_graphs).option_value for vol_val in vol_range_plot]
-
-        fig_vol = go.Figure()
-        fig_vol.add_trace(go.Scatter(x=vol_range_plot, y=prices_vol_call, mode='lines+markers', name=f'{style} Call'))
-        fig_vol.add_trace(go.Scatter(x=vol_range_plot, y=prices_vol_put, mode='lines+markers', name=f'{style} Put'))
-        fig_vol.update_layout(title=f"vs Volatility ({model})", xaxis_title="Volatility (Vol)", yaxis_title="Option Price", height=300, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
-    except Exception as graph_err: error_occurred = True; status_messages.append(f" ERROR: Vol Graph: {graph_err}"); fig_vol = create_empty_figure(f"Error")
-
-    # --- rf Graph ---
-    try:
-        status_messages.append(" Calculating rf sensitivity...")
-        rf_range_plot = np.linspace(max(0.0, rf - 0.04), rf + 0.05, num_points_actual)
-        # Explicitly pass all necessary option params, varying rf
-        prices_rf_call = [option_valuation(S0=s0, E=e, Tt=tt, Vol=vol, rf=rf_val, dt=base_dt, dividend_yield=div, call_put=1, **common_plot_args_graphs).option_value for rf_val in rf_range_plot]
-        prices_rf_put = [option_valuation(S0=s0, E=e, Tt=tt, Vol=vol, rf=rf_val, dt=base_dt, dividend_yield=div, call_put=-1, **common_plot_args_graphs).option_value for rf_val in rf_range_plot]
-
-        fig_rf = go.Figure()
-        fig_rf.add_trace(go.Scatter(x=rf_range_plot, y=prices_rf_call, mode='lines+markers', name=f'{style} Call'))
-        fig_rf.add_trace(go.Scatter(x=rf_range_plot, y=prices_rf_put, mode='lines+markers', name=f'{style} Put'))
-        fig_rf.update_layout(title=f"vs Risk-Free Rate ({model})", xaxis_title="Risk-Free Rate (rf)", yaxis_title="Option Price", height=300, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
-    except Exception as graph_err: error_occurred = True; status_messages.append(f" ERROR: rf Graph: {graph_err}"); fig_rf = create_empty_figure(f"Error")
-
-    # --- div Graph ---
-    try:
-        status_messages.append(" Calculating Dividend sensitivity...")
-        div_range_plot = np.linspace(0.0, max(0.1, div * 2.0 + 0.02) , num_points_actual)
-        # Explicitly pass all necessary option params, varying dividend_yield
-        prices_div_call = [option_valuation(S0=s0, E=e, Tt=tt, Vol=vol, rf=rf, dt=base_dt, dividend_yield=div_val, call_put=1, **common_plot_args_graphs).option_value for div_val in div_range_plot]
-        prices_div_put = [option_valuation(S0=s0, E=e, Tt=tt, Vol=vol, rf=rf, dt=base_dt, dividend_yield=div_val, call_put=-1, **common_plot_args_graphs).option_value for div_val in div_range_plot]
-
-        fig_div = go.Figure()
-        fig_div.add_trace(go.Scatter(x=div_range_plot, y=prices_div_call, mode='lines+markers', name=f'{style} Call'))
-        fig_div.add_trace(go.Scatter(x=div_range_plot, y=prices_div_put, mode='lines+markers', name=f'{style} Put'))
-        fig_div.update_layout(title=f"vs Dividend Yield ({model})", xaxis_title="Dividend Yield (q)", yaxis_title="Option Price", height=300, margin=dict(t=40, b=20, l=30, r=30), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
-    except Exception as graph_err: error_occurred = True; status_messages.append(f" ERROR: Div Graph: {graph_err}"); fig_div = create_empty_figure(f"Error")
-
-    # --- REMOVED: Calculation for Comparison Graph ---
-
-    # --- Final Touches ---
-    end_calc_time = time.time()
-    calc_duration = end_calc_time - start_calc_time
-    status_messages.append(f"\nCalculation finished in {calc_duration:.2f} seconds.")
-    status_html = html.Pre("\n".join(status_messages)) # Use Pre for multi-line status
-
-    # Determine final price color based on errors during graph generation too
-    if error_occurred and price_color != "danger":
-        price_color = "warning"
-        if "Error" not in price_output: # Avoid duplicating Error prefix
-             price_output += " (Graph errors)"
-
-    # Return statement updated (Removed fig_compare)
-    return price_output, price_color, status_html, fig_s0, fig_e, fig_tt, fig_vol, fig_rf, fig_div
+        finally:
+            # --- Final Touches ---
+            end_calc_time = time.time()
+            calc_duration = end_calc_time - start_calc_time
+            status_messages.append(f"\nCalculation finished in {calc_duration:.2f} seconds.")
+            log_placeholder.code("\n".join(status_messages))
+            if error_occurred:
+                log_expander.expanded = True # Auto-expand logs on error
+            else:
+                st.success("Calculations complete!")
 
 
-# ==============================================================================
-# %% Block 5: Run the App Server
-# ==============================================================================
-if __name__ == '__main__':
-    print("Block 5: Starting Dash server...")
-    print(f"Access the app at http://127.0.0.1:8050/")
-    # Use app.run() instead of app.run_server() for newer Dash versions
-    app.run(debug=True, port=8050) # Set debug=False for production / deployment
+# Add some instructions or info at the bottom
+st.divider()
+st.markdown(
+    """
+    **Instructions:**
+    1. Configure parameters in the sidebar.
+    2. Select the underlying asset model and adjust specific parameters if needed.
+    3. Set simulation settings (higher simulations increase accuracy but take longer).
+    4. Click "Calculate Price & Update Graphs".
+    5. Results and sensitivity graphs will appear in the main area. Check logs for details.
+
+    *Note: Calculations (especially sensitivity graphs) can take time due to Monte Carlo simulations.*
+    *Caching is enabled: Re-running with the exact same parameters will be much faster.*
+    """
+)
