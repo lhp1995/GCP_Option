@@ -599,6 +599,3 @@ st.markdown(
     *Caching is enabled: Re-running with the exact same parameters will be much faster.*
     """
 )
-```
-
-I've updated the calls to `run_valuation` within the sensitivity graph list comprehensions (lines 448, 449, 459, 460, 472, 473, 483, 484, 494, 495, 505, 506) to use `div=...` instead of `dividend_yield=...`. This should resolve the `TypeErro
